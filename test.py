@@ -166,17 +166,17 @@ if __name__ == '__main__':
     sweep_points = 3000 # Number of points in the sweep.
     sweep_buffer_time = 2 #s How much time ON TOP of sweep_time you want to wait for a sweep to occur.
                           #  I.e. this just gives the waiting for loop more time to ensure seep is complete.
-    reference_level = -20 #dBm This will depend on the measurement and noise floor (effected by rbw)
-    frontend_attenuation = 0 #dBm Sets the front end attenuation of the SA
+    reference_level = -10 #dBm This will depend on the measurement and noise floor (effected by rbw)
+    frontend_attenuation = 20 #dBm Sets the front end attenuation of the SA
     rbw = 1000 #Hz  Sets the capturing resolution BW of the SA.  Should be ~<= the size of features you
                #    wish to be able to see seperately.  This will effect the apparent noise floor. 
-    vbw = 1000 #Hz   Sets the display video BW of the SA.  This will not effect the apparent location
+    vbw = 50000 #Hz   Sets the display video BW of the SA.  This will not effect the apparent location
                #     of the noise floor, but should smooth out features to look less noisy.
     frequencies = numpy.linspace(freq_L,freq_R,sweep_points) #Hz
     plot_data = False
     output_path = './output/'
     save_data = True
-    total_runtime = 60 #s This is a lower bound.  Can be off by one cycle.  While loop runs until total time is reached and loop is called.
+    total_runtime = 30*60 #s This is a lower bound.  Can be off by one cycle.  While loop runs until total time is reached and loop is called.
 
     if save_data == True:
         #PREPARE OUTPUT FILE
@@ -185,23 +185,37 @@ if __name__ == '__main__':
             try:
                 outname = output_path + 'RIGOL_CAPTURE_' + str(script_start_time).replace(':','-').replace(' ','-').replace('.','p') + '.h5'
                 with h5py.File(outname, 'w') as outfile:
-                    outfile.attrs['freq_L'] = freq_L
-                    outfile.attrs['freq_R'] = freq_R
-                    outfile.attrs['sweep_time'] = sweep_time
-                    outfile.attrs['sweep_points'] = sweep_points
-                    outfile.attrs['sweep_buffer_time'] = sweep_buffer_time
-                    outfile.attrs['reference_level'] = reference_level 
-                    outfile.attrs['frontend_attenuation'] = frontend_attenuation
-                    outfile.attrs['rbw'] = rbw
-                    outfile.attrs['vbw'] = vbw
+                    try:
+                        outfile.attrs['freq_L'] = freq_L
+                        outfile.attrs['freq_R'] = freq_R
+                        outfile.attrs['sweep_time'] = sweep_time
+                        outfile.attrs['sweep_points'] = sweep_points
+                        outfile.attrs['sweep_buffer_time'] = sweep_buffer_time
+                        outfile.attrs['reference_level'] = reference_level 
+                        outfile.attrs['frontend_attenuation'] = frontend_attenuation
+                        outfile.attrs['rbw'] = rbw
+                        outfile.attrs['vbw'] = vbw
 
-                    outfile.create_dataset('frequencies', (len(frequencies),), dtype=float, compression='gzip', compression_opts=9)
-                    outfile.create_dataset('power', (0,len(frequencies)), dtype=float, maxshape=(None,len(frequencies)))
-                    outfile.create_dataset('utc_start_stamp', (0,1), dtype=float, maxshape=(None,1),chunks=True)
-                    outfile.create_dataset('utc_stop_stamp', (0,1), dtype=float, maxshape=(None,1),chunks=True)
-
-                    outfile.close() #Open whenever writing to it
-                    output_file_created = True
+                        outfile.create_dataset('frequencies', (len(frequencies),), dtype=float, compression='gzip', compression_opts=9)
+                        outfile.create_dataset('power', (0,len(frequencies)), dtype=float, maxshape=(None,len(frequencies)))
+                        outfile.create_dataset('utc_start_stamp', (0,1), dtype=float, maxshape=(None,1),chunks=True)
+                        outfile.create_dataset('utc_stop_stamp', (0,1), dtype=float, maxshape=(None,1),chunks=True)
+                        print('TRY AND CLOSE')
+                        time.sleep(10)
+                        outfile.close() #Open whenever writing to it
+                        output_file_created = True
+                    except KeyboardInterrupt as e:
+                        print(e)
+                        print('KeyboardInterrupt detected while file is open.  Closing File.')
+                        exc_type, exc_obj, exc_tb = sys.exc_info()
+                        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+                        print(exc_type, fname, exc_tb.tb_lineno)
+                        if 'outfile' in locals() or 'outfile' in globals():
+                            outfile.close()
+                            print('File closed.  Breaking scipt.')
+                            sys.exit()
+                        else:
+                            print('outfile does not exist to close. ')
             except Exception as e:
                 print('Error while trying to create output file.')
                 print(e)
@@ -264,19 +278,32 @@ if __name__ == '__main__':
             if save_data == True:
                 try:
                     with h5py.File(outname, 'a') as outfile:
-                        dataset = outfile['power']
-                        dataset.resize(measurement_row+1,axis=0)
-                        dataset[-1,:] = power_values
+                        try:
+                            dataset = outfile['power']
+                            dataset.resize(measurement_row+1,axis=0)
+                            dataset[-1,:] = power_values
 
-                        dataset = outfile['utc_start_stamp']
-                        dataset.resize(measurement_row+1,axis=0)
-                        dataset[-1] = utc_sweep_start_time.timestamp()
+                            dataset = outfile['utc_start_stamp']
+                            dataset.resize(measurement_row+1,axis=0)
+                            dataset[-1] = utc_sweep_start_time.timestamp()
 
-                        dataset = outfile['utc_stop_stamp']
-                        dataset.resize(measurement_row+1,axis=0)
-                        dataset[-1] = utc_sweep_stop_time.timestamp()
+                            dataset = outfile['utc_stop_stamp']
+                            dataset.resize(measurement_row+1,axis=0)
+                            dataset[-1] = utc_sweep_stop_time.timestamp()
 
-                        outfile.close() #Open whenever writing to it
+                            outfile.close() #Open whenever writing to it
+                        except KeyboardInterrupt as e:
+                            print(e)
+                            print('KeyboardInterrupt detected while file is open.  Closing File.')
+                            exc_type, exc_obj, exc_tb = sys.exc_info()
+                            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+                            print(exc_type, fname, exc_tb.tb_lineno)
+                            if 'outfile' in locals() or 'outfile' in globals():
+                                outfile.close()
+                                print('File closed.  Breaking scipt.')
+                                sys.exit()
+                            else:
+                                print('outfile does not exist to close. ')
                 except Exception as e:
                     print('Error while saveing to output file.')
                     print(e)
