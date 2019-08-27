@@ -200,8 +200,6 @@ if __name__ == '__main__':
                         outfile.create_dataset('power', (0,len(frequencies)), dtype=float, maxshape=(None,len(frequencies)))
                         outfile.create_dataset('utc_start_stamp', (0,1), dtype=float, maxshape=(None,1),chunks=True)
                         outfile.create_dataset('utc_stop_stamp', (0,1), dtype=float, maxshape=(None,1),chunks=True)
-                        print('TRY AND CLOSE')
-                        time.sleep(10)
                         outfile.close() #Open whenever writing to it
                         output_file_created = True
                     except KeyboardInterrupt as e:
