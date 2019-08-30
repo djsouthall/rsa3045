@@ -161,22 +161,22 @@ if __name__ == '__main__':
     #PARAMETERS
     #----------
     freq_L = 0 #Hz The lower edge of the measurement.
-    freq_R = 200e6 #Hz The upper edge of the measurement.
-    sweep_time = 5 #s How long the sweep time is for the measurement.
-    sweep_points = 3000 # Number of points in the sweep.
-    sweep_buffer_time = 2 #s How much time ON TOP of sweep_time you want to wait for a sweep to occur.
+    freq_R = 150e6 #Hz The upper edge of the measurement.
+    sweep_time = 60 #s How long the sweep time is for the measurement.
+    sweep_points = 10001 # Number of points in the sweep.
+    sweep_buffer_time = 15 #s How much time ON TOP of sweep_time you want to wait for a sweep to occur.
                           #  I.e. this just gives the waiting for loop more time to ensure seep is complete.
     reference_level = -10 #dBm This will depend on the measurement and noise floor (effected by rbw)
     frontend_attenuation = 20 #dBm Sets the front end attenuation of the SA
     rbw = 1000 #Hz  Sets the capturing resolution BW of the SA.  Should be ~<= the size of features you
                #    wish to be able to see seperately.  This will effect the apparent noise floor. 
-    vbw = 50000 #Hz   Sets the display video BW of the SA.  This will not effect the apparent location
+    vbw = 1000 #Hz   Sets the display video BW of the SA.  This will not effect the apparent location
                #     of the noise floor, but should smooth out features to look less noisy.
     frequencies = numpy.linspace(freq_L,freq_R,sweep_points) #Hz
     plot_data = False
     output_path = './output/'
     save_data = True
-    total_runtime = 30*60 #s This is a lower bound.  Can be off by one cycle.  While loop runs until total time is reached and loop is called.
+    total_runtime = 24*60*60 #s This is a lower bound.  Can be off by one cycle.  While loop runs until total time is reached and loop is called.
 
     if save_data == True:
         #PREPARE OUTPUT FILE
