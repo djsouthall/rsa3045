@@ -17,6 +17,7 @@ import astropy.time
 import astropy.coordinates
 import scipy
 import scipy.signal
+import scipy.interpolate
 
 
 plt.ion()
@@ -102,30 +103,42 @@ def getAttrDict(file):
 
 if __name__ == '__main__':
     plt.close('all')
-    filename = './output/RIGOL_CAPTURE_2019-08-28-16-59-35p666232+00-00.h5'
-    
+    #filename = './output/RIGOL_CAPTURE_2019-08-28-16-59-35p666232+00-00.h5'
+    filename = './output/RIGOL_CAPTURE_2019-08-30-19-34-48p981631+00-00.h5'
     #freq_ROI = [[0,10],[10,20],[20,30],[30,40],[40,50],[50,60],[60,70],[70,80],[80,90],[90,100],[100,110]]#[[0,200],[30,80],[25,45],[60.5,62.5],[77,79.5]] #MHz, frequencies within this range will be considered for noise calculations.  This are inclusive
     #Alternating signal at 73 MHz (72.94 MHz)
     #step = 10
     #freq_ROI = list(zip(numpy.arange(20,90,step),numpy.arange(20,90,step)+step))
     #freq_ROI = [[0,200],[35,80],[25,45],[46.82,47.3],[60.5,62.5],[77,79.5]]
-    freq_ROI = [[0,200],[42,44],[60,62],[73,74.6]]
+    freq_ROI = [[42,44],[35,42],[60,62],[73,74.6],[0,50]]
     #freq_ROI = [[0,200],[35,80],[25,45],[46.82,47.3],[57,59],[60.5,62.5],[77,79.5]]
-    ignore_range = [[0,28],[27,27.5],[35,37],[40.95,41.05],[49,55],[63.87,63.9],[65,72.9],[72.8,73.1],[72.92,72.97],[88.4,88.5],[88.8,88.9],[86,200]]
-    sweeps_per_bin = 40 #Put None to use capturing bins.
-    all_binnings = [None, 5, 10, 20, 40, 80]
+    ignore_range = [[0,31],[27,27.5],[31,42],[35,37],[40.95,41.05],[47,55],[63.87,63.9],[65,72.9],[72.8,73.1],[72,100],[72.92,72.97],[88.4,88.5],[88.8,88.9]]
+    all_binnings = [25]
 
     ignore_min_max = False
     plot_norm = True
     sag_plot = False
     lw = None #Linewidth None is default
     ignore_peaks = True
-    df_multiplier = 2.1
+    if filename == './output/RIGOL_CAPTURE_2019-08-28-16-59-35p666232+00-00.h5':
+        df_multiplier = 2
+        width = (0,4)
+        prominence = 1
+        freq_ROI.append([0,200])
+        ignore_range.append([86,200])
+    elif filename == './output/RIGOL_CAPTURE_2019-08-30-19-34-48p981631+00-00.h5':
+        df_multiplier = 4
+        width = (0,16)
+        prominence = 1
+        ignore_range.append([86,150])
+        freq_ROI.append([0,150])
 
     plot_total_averaged = True
     plot_stacked_spectra = False
     plot_comparison = True
-    plot_animated = False
+    plot_comparison_mins = True
+    plot_animated = True
+
 
     
 
@@ -146,7 +159,7 @@ if __name__ == '__main__':
             utc_timestamps, sagA_alt, sagA_az, sun_alt, sun_az = getSagCoords(run_start_time_utc_timestamp, run_stop_time_utc_timestamp, plot=sag_plot)
 
             average_power = 10*numpy.log10(numpy.mean(10**(file['power'][...]/10),axis=0))
-            peaks, _ = scipy.signal.find_peaks(average_power,width = (0,4),prominence=2)
+            peaks, _ = scipy.signal.find_peaks(average_power,width = width,prominence=prominence)
             if ignore_peaks == True:
                 for peak in peaks:
                     ignore_range.append([(frequencies[peak]-df_multiplier*df)/1e6,(frequencies[peak]+df_multiplier*df)/1e6])
@@ -197,16 +210,21 @@ if __name__ == '__main__':
                     binned_power = numpy.zeros((numpy.ceil(numpy.shape(power_data)[0] / sweeps_per_bin).astype(int),numpy.shape(power_data)[1]))
                     binned_times = numpy.zeros((numpy.ceil(numpy.shape(power_data)[0] / sweeps_per_bin).astype(int)))
 
+
+
                     starts = file['utc_start_stamp'][:,0]
                     stops = file['utc_stop_stamp'][:,0]
 
                     for index in range((numpy.ceil(numpy.shape(power_data)[0] / sweeps_per_bin).astype(int))):
                         binned_power[index] = 10*numpy.log10(numpy.mean(10**(power_data[index*sweeps_per_bin:min((index+1)*sweeps_per_bin,len(stops))]/10),axis=0)) 
                         binned_times[index] = ((stops[min((index+1)*sweeps_per_bin - 1,len(stops)-1)] + stops[(index)*sweeps_per_bin])/2.0 - file['utc_start_stamp'][0])/3600.
+                    
                 else:
                     binned_power = file['power'][...]
                     binned_times = ((file['utc_stop_stamp'][:,0] + file['utc_start_stamp'][:,0])/2.0 - file['utc_start_stamp'][0])/3600.
 
+                interpolated_sun_alt = scipy.interpolate.interp1d(utc_timestamps.flatten()/3600,sun_alt.flatten())(binned_times)
+                
                 if plot_stacked_spectra:
                     #Plot All Spectra
                     plt.figure()
@@ -255,6 +273,8 @@ if __name__ == '__main__':
                     for ROI_index, ROI in enumerate(freq_ROI):
                         frequency_cut = numpy.logical_and(frequencies/1e6 >= ROI[0], frequencies/1e6 <= ROI[1])
                         frequency_cut = numpy.logical_and(frequency_cut,ignore_cut)
+                        if numpy.any(frequency_cut) == False:
+                            continue
                         average_power = 10*numpy.log10(numpy.mean(10**(binned_power[:,frequency_cut]/10),axis=1))
                         
                         if ignore_min_max == True:
@@ -287,9 +307,63 @@ if __name__ == '__main__':
                     #Make Landscape
                     ax.axhspan(0, 90, alpha=0.2,label='Sky', color = 'blue')
                     ax.axhspan(-90, 0, alpha=0.2,label='Ground', color = 'green')
-                    day_cut = (sun_alt > 0)[:,0]
-                    interest_points = numpy.where(numpy.diff(day_cut.astype(int)) != 0)[0]
-                    #numpy.where(day_cut == 0)[0][0]
+                    #ax.axvspan(0, 90, alpha=0.2,label='Sky', color = 'blue')
+
+
+                    plt.plot(utc_timestamps/3600.0, sagA_alt, c='r',label='Sgr A*',linewidth=lw)
+                    plt.plot(utc_timestamps/3600.0, sun_alt, c='k',label='Sun',linewidth=lw)
+
+                    plt.xlabel('Hours from Start of Run')
+                    plt.ylabel('Altitutude (Degrees)')
+                    plt.grid(which='both', axis='both')
+                    ax.minorticks_on()
+                    ax.grid(b=True, which='major', color='k', linestyle='-')
+                    ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
+                    plt.xlabel('Elapsed Time Since Beginning of Run (Hours)')
+                    plt.legend(loc='upper right')
+                    #plt.ylim((min(sagA_alt.degree)-5,max(sagA_alt.degree)+5))
+                    plt.ylim((-90,90))
+
+                if plot_comparison_mins:
+                    #PLot the mean in ROI as a function of time. 
+                    ROI_cm = plt.get_cmap('gist_rainbow')
+
+                    plt.figure()
+                    plt.subplot(2,1,1)
+                    ax = plt.gca()
+
+                    #x = [datetime.datetime.strptime(datetime.fromtimestamp(d).replace(tzinfo=pytz.utc).astimezone(pytz.timezone('America/Chicago')),'%m/%d/%Y').date() for d in times]
+                    for ROI_index, ROI in enumerate(freq_ROI):
+                        frequency_cut = numpy.logical_and(frequencies/1e6 >= ROI[0], frequencies/1e6 <= ROI[1])
+                        frequency_cut = numpy.logical_and(frequency_cut,ignore_cut)
+                        if numpy.any(frequency_cut) == False:
+                            continue
+                        min_power = numpy.min(binned_power[:,frequency_cut],axis=1)
+                        x = binned_times
+
+                        if plot_norm:
+                            normalized_power = (min_power - min(min_power))/(max(min_power) - min(min_power)) #+ ROI_index
+                            plt.plot(x, normalized_power,label='Frequency ROI = %s'%str(ROI), alpha=0.8, color = ROI_cm(ROI_index/len(freq_ROI)),linewidth=lw) 
+                            plt.ylabel('Minimum Power in ROI (Normalized in dB Units For Each Curve)')
+                        else:
+                            plt.plot(x, min_power,label='Frequency ROI = %s'%str(ROI), alpha=0.8, color = ROI_cm(ROI_index/len(freq_ROI)),linewidth=lw) 
+                            plt.ylabel('Minimum Power in ROI (dBm)')
+
+                    #Pretty up plot
+                    plt.grid(which='both', axis='both')
+                    ax = plt.gca()
+                    ax.minorticks_on()
+                    ax.grid(b=True, which='major', color='k', linestyle='-')
+                    ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
+                    plt.xlabel('Elapsed Time Since Beginning of Run (Hours)')
+                    plt.legend(loc='upper right')
+
+                    plt.subplot(2,1,2,sharex = ax)
+                    ax = plt.gca()
+                    
+                    #Make Landscape
+                    ax.axhspan(0, 90, alpha=0.2,label='Sky', color = 'blue')
+                    ax.axhspan(-90, 0, alpha=0.2,label='Ground', color = 'green')
                     #ax.axvspan(0, 90, alpha=0.2,label='Sky', color = 'blue')
 
 
@@ -325,7 +399,6 @@ if __name__ == '__main__':
                         ax.axvspan(ROI[0], ROI[1], alpha=0.8,hatch = 'x', color = 'gray')
                     
 
-
                     #Pretty up plot
                     plt.grid(which='both', axis='both')
                     ax = plt.gca()
@@ -335,11 +408,11 @@ if __name__ == '__main__':
                     plt.ylabel('dBm')
                     plt.xlabel('Frequency (MHz)')
                     cm = plt.get_cmap('gist_rainbow')
-                    line, = ax.plot(frequencies/1e6,binned_power[0],color='k',label='%.2f h Elapsed'%binned_times[0])
+                    line, = ax.plot(frequencies/1e6,binned_power[0],color='k',label='%.2f h Elapsed\n Sun Alt = %0.2f'%(binned_times[0],interpolated_sun_alt[0]))
                     leg = plt.legend(loc='upper right')
                     def update(row):
                         line.set_ydata(binned_power[row])
-                        leg.get_texts()[0].set_text('%.2f h Elapsed'%binned_times[row])
+                        leg.get_texts()[0].set_text('%.2f h Elapsed\n Sun Alt = %0.2f'%(binned_times[row],interpolated_sun_alt[row]))
                         return line, ax
 
                     anim = matplotlib.animation.FuncAnimation(fig, update, frames=numpy.arange(len(binned_times)), interval=10*1000 / len(binned_times))
