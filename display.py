@@ -38,7 +38,8 @@ def getSagCoords(run_start_time_utc_timestamp, run_stop_time_utc_timestamp, n_po
         Enables plotting if True.
     '''
     try:
-        antenna_location = astropy.coordinates.EarthLocation(lat=41.791519,lon=-87.601641) #Site of test on ERC Roof, Chicago
+        #antenna_location = astropy.coordinates.EarthLocation(lat=41.791519,lon=-87.601641) #Site of test on ERC Roof, Chicago
+        #antenna_location = astropy.coordinates.EarthLocation(lat=37.583342,lon=-118.236484) #Barcroft Station
         
         #Location of Sagitarius A in Right Ascension and Declination
         ra = 266.427 * astropy.units.deg # Could also use Angle
@@ -62,13 +63,18 @@ def getSagCoords(run_start_time_utc_timestamp, run_stop_time_utc_timestamp, n_po
 
         if plot == True:
             plt.figure()
+            ax = plt.gca()
+            #Make Landscape
+            ax.axhspan(0, 90, alpha=0.2,label='Sky', color = 'blue')
+            ax.axhspan(-90, 0, alpha=0.2,label='Ground', color = 'green')
             plt.plot(time_window, sagAaltazs.alt,label='Sgr A*')
             plt.plot(time_window, sun_loc.alt,label='Sun')
 
             #plt.ylim(1, 4)
-            plt.xlabel('Hours from Start of Run')
-            plt.ylabel('Altitutude (Degrees)')
-
+            plt.xlabel('Hours from Start of Run',fontsize=16)
+            plt.ylabel('Altitutude (Degrees)',fontsize=16)
+            plt.ylim([-90,90])
+            plt.legend(fontsize=16)
 
         return time_window_utc_timestamp, sagAaltazs.alt, sagAaltazs.az, sun_loc.alt, sun_loc.az
     except Exception as e:
@@ -102,7 +108,7 @@ def getAttrDict(file):
 
 
 if __name__ == '__main__':
-    plt.close('all')
+    #plt.close('all')
     #filename = './output/RIGOL_CAPTURE_2019-08-28-16-59-35p666232+00-00.h5'
     filename = './output/RIGOL_CAPTURE_2019-08-30-19-34-48p981631+00-00.h5'
     #freq_ROI = [[0,10],[10,20],[20,30],[30,40],[40,50],[50,60],[60,70],[70,80],[80,90],[90,100],[100,110]]#[[0,200],[30,80],[25,45],[60.5,62.5],[77,79.5]] #MHz, frequencies within this range will be considered for noise calculations.  This are inclusive
@@ -110,16 +116,17 @@ if __name__ == '__main__':
     #step = 10
     #freq_ROI = list(zip(numpy.arange(20,90,step),numpy.arange(20,90,step)+step))
     #freq_ROI = [[0,200],[35,80],[25,45],[46.82,47.3],[60.5,62.5],[77,79.5]]
-    freq_ROI = [[42,44],[35,42],[60,62],[73,74.6],[0,50]]
+    freq_ROI = [[13.36,13.41], [25.55,25.67],[37.5,38.25],[42,44],[73,74.6]]# [[30,37.4],[38.3,42],[47,55],[54,72],[65,72.9],[74.7,90]]#[[37.5,38.25],[73,74.6]]#[[42,44],[35,42],[73,74.6],[0,50]]
     #freq_ROI = [[0,200],[35,80],[25,45],[46.82,47.3],[57,59],[60.5,62.5],[77,79.5]]
-    ignore_range = [[0,31],[27,27.5],[31,42],[35,37],[40.95,41.05],[47,55],[63.87,63.9],[65,72.9],[72.8,73.1],[72,100],[72.92,72.97],[88.4,88.5],[88.8,88.9]]
-    all_binnings = [25]
+    ignore_range = [[30,37.4],[38.3,42],[47,55],[54,72],[65,72.9],[74.7,90]]#[[0,31],[27,27.5],[31,42],[35,37],[40.95,41.05],[47,55],[63.87,63.9],[65,72.9],[72.8,73.1],[72,100],[72.92,72.97],[88.4,88.5],[88.8,88.9]]
+    all_binnings = [10]
 
     ignore_min_max = False
-    plot_norm = True
-    sag_plot = False
+    plot_norm = False
+    sag_plot = True
     lw = None #Linewidth None is default
     ignore_peaks = True
+    
     if filename == './output/RIGOL_CAPTURE_2019-08-28-16-59-35p666232+00-00.h5':
         df_multiplier = 2
         width = (0,4)
@@ -131,12 +138,14 @@ if __name__ == '__main__':
         width = (0,16)
         prominence = 1
         ignore_range.append([86,150])
+        ignore_range.append([0,35])
         freq_ROI.append([0,150])
 
     plot_total_averaged = True
     plot_stacked_spectra = False
-    plot_comparison = True
+    plot_comparison = False
     plot_comparison_mins = True
+    min_method = 3
     plot_animated = True
 
 
@@ -195,12 +204,18 @@ if __name__ == '__main__':
                 ax.minorticks_on()
                 ax.grid(b=True, which='major', color='k', linestyle='-')
                 ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                plt.ylabel('dBm')
-                plt.xlabel('Frequency (MHz)')
+                plt.ylabel('dBm',fontsize=16)
+                plt.xlabel('Frequency (MHz)',fontsize=16)
                 plt.title('Average Spectum Over %0.2fh Run'%((utc_timestamps[-1]-utc_timestamps[0])/3600.0))
                 plt.scatter(frequencies[peaks]/1e6,average_power[peaks],c='r',s=20,label='Identified Peaks')
-                plt.legend(loc='upper right')
+                plt.legend(loc='upper right',fontsize=16)
 
+
+            start_tod = datetime.fromtimestamp(file['utc_start_stamp'][0,0]).astimezone(pytz.timezone('America/Chicago'))
+            stop_tod = datetime.fromtimestamp(file['utc_stop_stamp'][-1,0]).astimezone(pytz.timezone('America/Chicago'))
+
+            print('Run Start:',start_tod)
+            print('Run Stop:',stop_tod)
 
             for sweeps_per_bin in all_binnings:
 
@@ -222,6 +237,7 @@ if __name__ == '__main__':
                 else:
                     binned_power = file['power'][...]
                     binned_times = ((file['utc_stop_stamp'][:,0] + file['utc_start_stamp'][:,0])/2.0 - file['utc_start_stamp'][0])/3600.
+
 
                 interpolated_sun_alt = scipy.interpolate.interp1d(utc_timestamps.flatten()/3600,sun_alt.flatten())(binned_times)
                 
@@ -256,8 +272,8 @@ if __name__ == '__main__':
                     ax.minorticks_on()
                     ax.grid(b=True, which='major', color='k', linestyle='-')
                     ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                    plt.ylabel('dBm')
-                    plt.xlabel('Frequency (MHz)')
+                    plt.ylabel('dBm',fontsize=16)
+                    plt.xlabel('Frequency (MHz)',fontsize=16)
 
 
 
@@ -287,10 +303,10 @@ if __name__ == '__main__':
                         if plot_norm:
                             normalized_power = (average_power - min(average_power))/(max(average_power) - min(average_power)) #+ ROI_index
                             plt.plot(x, normalized_power,label='Frequency ROI = %s'%str(ROI), alpha=0.8, color = ROI_cm(ROI_index/len(freq_ROI)),linewidth=lw) 
-                            plt.ylabel('Average Power in ROI (Normalized in dB Units For Each Curve)')
+                            plt.ylabel('Average Power in ROI (Normalized in dB Units For Each Curve)',fontsize=16)
                         else:
                             plt.plot(x, average_power,label='Frequency ROI = %s'%str(ROI), alpha=0.8, color = ROI_cm(ROI_index/len(freq_ROI)),linewidth=lw) 
-                            plt.ylabel('Average Power in ROI (dBm)')
+                            plt.ylabel('Average Power in ROI (dBm)',fontsize=16)
 
                     #Pretty up plot
                     plt.grid(which='both', axis='both')
@@ -298,8 +314,8 @@ if __name__ == '__main__':
                     ax.minorticks_on()
                     ax.grid(b=True, which='major', color='k', linestyle='-')
                     ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                    plt.xlabel('Elapsed Time Since Beginning of Run (Hours)')
-                    plt.legend(loc='upper right')
+                    plt.xlabel('Elapsed Time Since Beginning of Run (Hours)',fontsize=16)
+                    plt.legend(loc='upper right',fontsize=16)
 
                     plt.subplot(2,1,2,sharex = ax)
                     ax = plt.gca()
@@ -313,14 +329,14 @@ if __name__ == '__main__':
                     plt.plot(utc_timestamps/3600.0, sagA_alt, c='r',label='Sgr A*',linewidth=lw)
                     plt.plot(utc_timestamps/3600.0, sun_alt, c='k',label='Sun',linewidth=lw)
 
-                    plt.xlabel('Hours from Start of Run')
-                    plt.ylabel('Altitutude (Degrees)')
+                    plt.xlabel('Hours from Start of Run',fontsize=16)
+                    plt.ylabel('Altitutude (Degrees)',fontsize=16)
                     plt.grid(which='both', axis='both')
                     ax.minorticks_on()
                     ax.grid(b=True, which='major', color='k', linestyle='-')
                     ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                    plt.xlabel('Elapsed Time Since Beginning of Run (Hours)')
-                    plt.legend(loc='upper right')
+                    plt.xlabel('Elapsed Time Since Beginning of Run (Hours)',fontsize=16)
+                    plt.legend(loc='upper right',fontsize=16)
                     #plt.ylim((min(sagA_alt.degree)-5,max(sagA_alt.degree)+5))
                     plt.ylim((-90,90))
 
@@ -338,16 +354,38 @@ if __name__ == '__main__':
                         frequency_cut = numpy.logical_and(frequency_cut,ignore_cut)
                         if numpy.any(frequency_cut) == False:
                             continue
-                        min_power = numpy.min(binned_power[:,frequency_cut],axis=1)
+
+                        if min_method == 1:
+                            min_power = numpy.min(binned_power[:,frequency_cut],axis=1)
+                        elif min_method == 2:
+                            #TRY GETTING MIN IN FREQ RANGE BEFORE BINNING IN TIME
+                            min_powers = numpy.min(power_data[:,frequency_cut],axis=1)
+                            if sweeps_per_bin is not None:
+                                min_power = numpy.zeros_like(binned_times)
+                                for index in range((numpy.ceil(numpy.shape(power_data)[0] / sweeps_per_bin).astype(int))):
+                                    min_power[index] = 10.0*numpy.log10(numpy.mean(10.0**(min_powers[index*sweeps_per_bin:min((index+1)*sweeps_per_bin,len(stops))]/10.0))) 
+                            else:
+                                min_power = min_powers
+                        elif min_method == 3:
+                            #TRY GETTING MIN IN FREQ RANGE BEFORE BINNING IN TIME
+                            min_powers = numpy.min(power_data[:,frequency_cut],axis=1)
+                            if sweeps_per_bin is not None:
+                                min_power = numpy.zeros_like(binned_times)
+                                for index in range((numpy.ceil(numpy.shape(power_data)[0] / sweeps_per_bin).astype(int))):
+                                    min_power[index] = numpy.min(min_powers[index*sweeps_per_bin:min((index+1)*sweeps_per_bin,len(stops))]) 
+                            else:
+                                min_power = min_powers
+
+                        
                         x = binned_times
 
                         if plot_norm:
                             normalized_power = (min_power - min(min_power))/(max(min_power) - min(min_power)) #+ ROI_index
                             plt.plot(x, normalized_power,label='Frequency ROI = %s'%str(ROI), alpha=0.8, color = ROI_cm(ROI_index/len(freq_ROI)),linewidth=lw) 
-                            plt.ylabel('Minimum Power in ROI (Normalized in dB Units For Each Curve)')
+                            plt.ylabel('Minimum Power in ROI (Normalized in dB Units For Each Curve)',fontsize=16)
                         else:
                             plt.plot(x, min_power,label='Frequency ROI = %s'%str(ROI), alpha=0.8, color = ROI_cm(ROI_index/len(freq_ROI)),linewidth=lw) 
-                            plt.ylabel('Minimum Power in ROI (dBm)')
+                            plt.ylabel('Minimum Power in ROI (dBm)',fontsize=16)
 
                     #Pretty up plot
                     plt.grid(which='both', axis='both')
@@ -355,8 +393,8 @@ if __name__ == '__main__':
                     ax.minorticks_on()
                     ax.grid(b=True, which='major', color='k', linestyle='-')
                     ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                    plt.xlabel('Elapsed Time Since Beginning of Run (Hours)')
-                    plt.legend(loc='upper right')
+                    plt.xlabel('Elapsed Time Since Beginning of Run (Hours)',fontsize=16)
+                    plt.legend(loc='upper right',fontsize=16)
 
                     plt.subplot(2,1,2,sharex = ax)
                     ax = plt.gca()
@@ -370,14 +408,14 @@ if __name__ == '__main__':
                     plt.plot(utc_timestamps/3600.0, sagA_alt, c='r',label='Sgr A*',linewidth=lw)
                     plt.plot(utc_timestamps/3600.0, sun_alt, c='k',label='Sun',linewidth=lw)
 
-                    plt.xlabel('Hours from Start of Run')
-                    plt.ylabel('Altitutude (Degrees)')
+                    plt.xlabel('Hours from Start of Run',fontsize=16)
+                    plt.ylabel('Altitutude (Degrees)',fontsize=16)
                     plt.grid(which='both', axis='both')
                     ax.minorticks_on()
                     ax.grid(b=True, which='major', color='k', linestyle='-')
                     ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                    plt.xlabel('Elapsed Time Since Beginning of Run (Hours)')
-                    plt.legend(loc='upper right')
+                    plt.xlabel('Elapsed Time Since Beginning of Run (Hours)',fontsize=16)
+                    plt.legend(loc='upper right',fontsize=16)
                     #plt.ylim((min(sagA_alt.degree)-5,max(sagA_alt.degree)+5))
                     plt.ylim((-90,90))
 
@@ -405,11 +443,11 @@ if __name__ == '__main__':
                     ax.minorticks_on()
                     ax.grid(b=True, which='major', color='k', linestyle='-')
                     ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                    plt.ylabel('dBm')
-                    plt.xlabel('Frequency (MHz)')
+                    plt.ylabel('dBm',fontsize=16)
+                    plt.xlabel('Frequency (MHz)',fontsize=16)
                     cm = plt.get_cmap('gist_rainbow')
                     line, = ax.plot(frequencies/1e6,binned_power[0],color='k',label='%.2f h Elapsed\n Sun Alt = %0.2f'%(binned_times[0],interpolated_sun_alt[0]))
-                    leg = plt.legend(loc='upper right')
+                    leg = plt.legend(loc='upper right',fontsize=16)
                     def update(row):
                         line.set_ydata(binned_power[row])
                         leg.get_texts()[0].set_text('%.2f h Elapsed\n Sun Alt = %0.2f'%(binned_times[row],interpolated_sun_alt[row]))
