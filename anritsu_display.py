@@ -12,7 +12,6 @@ Additional plotting parameters are available to allow you to highlight
 subsets of the spectrum for tracking, or to exclude certain regions from any
 measurements.  
 '''
-import ffmpeg
 import visa
 import time
 from datetime import datetime
@@ -122,6 +121,7 @@ if __name__ == '__main__':
     plot_comparison = True
     plot_comparison_mins = True
     plot_animated = True
+    plot_data_collection_check = False
     min_method = 3
 
 
@@ -443,7 +443,7 @@ if __name__ == '__main__':
                 return line, ax
 
             anim = matplotlib.animation.FuncAnimation(fig, update, frames=numpy.arange(len(binned_times)), interval=10*1000 / len(binned_times))
-            # Set up formatting for the movie files
-            #anim.save('animated_spectra.mp4', writer=None)
+
+        if plot_data_collection_check:
             plt.figure()
             plt.imshow(numpy.diff(powers,axis=0)==0,aspect='auto') #Checks if the spectra were properly updated between taking of data.  
