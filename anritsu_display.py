@@ -12,6 +12,7 @@ Additional plotting parameters are available to allow you to highlight
 subsets of the spectrum for tracking, or to exclude certain regions from any
 measurements.  
 '''
+import ffmpeg
 import visa
 import time
 from datetime import datetime
@@ -30,6 +31,7 @@ import scipy
 import scipy.signal
 import scipy.interpolate
 import pandas as pd
+import glob
 
 plt.ion()
 
@@ -130,12 +132,17 @@ if __name__ == '__main__':
 
     timezone = pytz.timezone('US/Pacific')
 
+    filenames = numpy.array(glob.glob('C:/Users/dsouthall/Desktop/RIGOL/python/rsa3045/output/anritsu/spec_analyzer_data/test_run2/*.hdf5'))
+    run_numbers = numpy.array([int(f.split('_')[-3].replace('run','')) for f in filenames])
+    filenames = filenames[numpy.argsort(run_numbers)]
+    run_numbers = numpy.sort(run_numbers)
+
+    ts = []
+    powers = []
 
     for filename in filenames:
         with h5py.File(filename, 'r') as file:
             try:
-                ts = []
-                powers = []
 
                 dataframe = pd.read_hdf(filename,'spectra')
                 for key in dataframe.keys():
@@ -143,289 +150,10 @@ if __name__ == '__main__':
                     ts.append(time.timestamp())
                     freq_MHz = numpy.array(dataframe[key]['freq_hz'])/1.0e6
                     freq_Hz = numpy.array(dataframe[key]['freq_hz'])
-                    dBm = dataframe[key]['power_dBm']
+                    dBm = dataframe[key]['power_dBm']  #These can be nan for some reason?  Maybe should mask the nan values in powers
                     powers.append(dBm)
                 df = freq_Hz[1] - freq_Hz[0]
-                powers = numpy.array(powers)
-                ts = numpy.array(ts)
                 file.close() #Open whenever writing to it
-                run_start_time_utc_timestamp = min(ts)
-                run_stop_time_utc_timestamp = max(ts)
-                utc_timestamps, sagA_alt, sagA_az, sun_alt, sun_az = getSagCoords(run_start_time_utc_timestamp, run_stop_time_utc_timestamp,antenna_latlon, plot=sag_plot)
-                
-                average_power = 10*numpy.log10(numpy.mean(10**(powers/10),axis=0))
-                peaks, _ = scipy.signal.find_peaks(average_power,width = width,prominence=prominence)
-                if ignore_peaks == True:
-                    for peak in peaks:
-                        ignore_range.append([(freq_Hz[peak]-df_multiplier*df)/1e6,(freq_Hz[peak]+df_multiplier*df)/1e6])
-
-                ignore_cut = numpy.ones_like(freq_Hz,dtype=bool)
-                for i in ignore_range:
-                    ignore_cut = numpy.multiply(~numpy.logical_and(freq_Hz/1e6 <= i[1],freq_Hz/1e6 >= i[0] ), ignore_cut) #Falses in this result in those freq_Hz not being considered in averages.
-
-                if plot_total_averaged:
-                    #Plot Full Run Average Spectra
-                    fig = plt.figure()
-                    fig.canvas.set_window_title('Total Average Spectra')
-                    ax = plt.gca()
-                    
-                    #Plot regions of interest
-                    ROI_cm = plt.get_cmap('gist_rainbow')
-                    for ROI_index, ROI in enumerate(freq_ROI):
-                        frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
-                        if numpy.all(frequency_cut):
-                            continue
-                        ax.axvspan(ROI[0], ROI[1], alpha=0.5,label='Frequency ROI = %s'%str(ROI), color = ROI_cm(ROI_index/len(freq_ROI)))
-
-                    for ROI_index, ROI in enumerate(ignore_range):
-                        frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
-                        ax.axvspan(ROI[0], ROI[1], alpha=0.8,hatch = 'x', color = 'gray')
-
-                    #Plot average spectra
-                    plt.plot(freq_Hz/1e6,average_power,label='Averaged Spectrum')
-                    
-                    #Pretty up plot
-                    plt.grid(which='both', axis='both')
-                    ax = plt.gca()
-                    ax.minorticks_on()
-                    ax.grid(b=True, which='major', color='k', linestyle='-')
-                    ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                    plt.ylabel('dBm',fontsize=16)
-                    plt.xlabel('Frequency (MHz)',fontsize=16)
-                    plt.title('Average Spectum Over %0.2fh Run'%((utc_timestamps[-1]-utc_timestamps[0])/3600.0))
-                    plt.scatter(freq_Hz[peaks]/1e6,average_power[peaks],c='r',s=20,label='Identified Peaks')
-                    plt.legend(loc='upper right',fontsize=16)
-
-                start_tod = datetime.fromtimestamp(run_start_time_utc_timestamp).astimezone(timezone)
-                stop_tod = datetime.fromtimestamp(run_stop_time_utc_timestamp).astimezone(timezone)
-
-                print('Run Start:',start_tod)
-                print('Run Stop:',stop_tod)
-
-                for sweeps_per_bin in all_binnings:
-                    if sweeps_per_bin is not None:
-
-                        binned_power = numpy.zeros((numpy.ceil(numpy.shape(powers)[0] / sweeps_per_bin).astype(int),numpy.shape(powers)[1]))
-                        binned_times = numpy.zeros((numpy.ceil(numpy.shape(powers)[0] / sweeps_per_bin).astype(int)))
-
-                        for index in range((numpy.ceil(numpy.shape(powers)[0] / sweeps_per_bin).astype(int))):
-                            binned_power[index] = 10*numpy.log10(numpy.mean(10**(powers[index*sweeps_per_bin:min((index+1)*sweeps_per_bin,len(ts))]/10),axis=0)) 
-                            binned_times[index] = ((ts[min((index+1)*sweeps_per_bin - 1,len(ts)-1)] + ts[(index)*sweeps_per_bin])/2.0 - min(ts))/3600.
-                        
-                    else:
-                        binned_power = powers
-                        binned_times = (ts-min(ts))/3600.
-
-                    interpolated_sun_alt = scipy.interpolate.interp1d(utc_timestamps.flatten()/3600,sun_alt.flatten())(binned_times)
-                    
-                    if plot_stacked_spectra:
-                        #Plot All Spectra
-                        fig = plt.figure()
-                        fig.canvas.set_window_title('Stacked Spectra')
-                        ax = plt.gca()
-                        
-                        #Plot regions of interest
-                        ROI_cm = plt.get_cmap('gist_rainbow')
-                        for ROI_index, ROI in enumerate(freq_ROI):
-                            frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
-                            if numpy.all(frequency_cut):
-                                continue
-                            ax.axvspan(ROI[0], ROI[1], alpha=0.5,label='Frequency ROI = %s'%str(ROI), color = ROI_cm(ROI_index/len(freq_ROI)))
-
-                        for ROI_index, ROI in enumerate(ignore_range):
-                            frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
-                            #ax.axvspan(ROI[0], ROI[1], alpha=0.8,hatch = 'x',label='Frequency IGNORED = %s'%str(ROI), color = 'gray')
-                            ax.axvspan(ROI[0], ROI[1], alpha=0.8,hatch = 'x', color = 'gray')
-                        
-
-
-                        #Plot average sepectra
-                        cm = plt.get_cmap('gist_rainbow')
-                        for index, row in enumerate(binned_power):
-                            plt.plot(freq_Hz/1e6,row,alpha=0.5,color=cm(index/len(binned_times)))
-                        
-                        #Pretty up plot
-                        plt.grid(which='both', axis='both')
-                        ax = plt.gca()
-                        ax.minorticks_on()
-                        ax.grid(b=True, which='major', color='k', linestyle='-')
-                        ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                        plt.ylabel('dBm',fontsize=16)
-                        plt.xlabel('Frequency (MHz)',fontsize=16)
-
-
-
-                    if plot_comparison:
-                        #PLot the mean in ROI as a function of time. 
-                        ROI_cm = plt.get_cmap('gist_rainbow')
-
-                        fig = plt.figure()
-                        fig.canvas.set_window_title('Mean Noise Alt Comparison')
-                        plt.subplot(2,1,1)
-                        ax = plt.gca()
-
-                        #x = [datetime.datetime.strptime(datetime.fromtimestamp(d).replace(tzinfo=pytz.utc).astimezone(pytz.timezone('America/Chicago')),'%m/%d/%Y').date() for d in times]
-                        for ROI_index, ROI in enumerate(freq_ROI):
-                            frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
-                            frequency_cut = numpy.logical_and(frequency_cut,ignore_cut)
-                            if numpy.any(frequency_cut) == False:
-                                continue
-                            average_power = 10*numpy.log10(numpy.mean(10**(binned_power[:,frequency_cut]/10),axis=1))
-                            
-                            if ignore_min_max == True:
-                                min_max_cut = ~numpy.isin(average_power, [min(average_power),max(average_power)])
-                                average_power = average_power[min_max_cut]
-                                x = binned_times[min_max_cut]
-                            else:
-                                x = binned_times
-
-                            plt.plot(x, average_power,label='Frequency ROI = %s'%str(ROI), alpha=0.8, color = ROI_cm(ROI_index/len(freq_ROI)),linewidth=lw) 
-                            plt.ylabel('Average Power in ROI (dBm)',fontsize=16)
-
-                        #Pretty up plot
-                        plt.grid(which='both', axis='both')
-                        ax = plt.gca()
-                        ax.minorticks_on()
-                        ax.grid(b=True, which='major', color='k', linestyle='-')
-                        ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                        plt.xlabel('Elapsed Time Since Beginning of Run (Hours)',fontsize=16)
-                        plt.legend(loc='upper right',fontsize=16)
-
-                        plt.subplot(2,1,2,sharex = ax)
-                        ax = plt.gca()
-                        
-                        #Make Landscape
-                        ax.axhspan(0, 90, alpha=0.2,label='Sky', color = 'blue')
-                        ax.axhspan(-90, 0, alpha=0.2,label='Ground', color = 'green')
-                        #ax.axvspan(0, 90, alpha=0.2,label='Sky', color = 'blue')
-
-
-                        plt.plot(utc_timestamps/3600.0, sagA_alt, c='r',label='Sgr A*',linewidth=lw)
-                        plt.plot(utc_timestamps/3600.0, sun_alt, c='k',label='Sun',linewidth=lw)
-
-                        plt.xlabel('Hours from Start of Run',fontsize=16)
-                        plt.ylabel('Altitutude (Degrees)',fontsize=16)
-                        plt.grid(which='both', axis='both')
-                        ax.minorticks_on()
-                        ax.grid(b=True, which='major', color='k', linestyle='-')
-                        ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                        plt.xlabel('Elapsed Time Since Beginning of Run (Hours)',fontsize=16)
-                        plt.legend(loc='upper right',fontsize=16)
-                        #plt.ylim((min(sagA_alt.degree)-5,max(sagA_alt.degree)+5))
-                        plt.ylim((-90,90))
-
-                    if plot_comparison_mins:
-                        #PLot the mean in ROI as a function of time. 
-                        ROI_cm = plt.get_cmap('gist_rainbow')
-
-                        fig = plt.figure()
-                        fig.canvas.set_window_title('Min Noise Alt Comparison')
-                        plt.subplot(2,1,1)
-                        ax = plt.gca()
-
-                        #x = [datetime.datetime.strptime(datetime.fromtimestamp(d).replace(tzinfo=pytz.utc).astimezone(pytz.timezone('America/Chicago')),'%m/%d/%Y').date() for d in times]
-                        for ROI_index, ROI in enumerate(freq_ROI):
-                            frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
-                            frequency_cut = numpy.logical_and(frequency_cut,ignore_cut)
-                            if numpy.any(frequency_cut) == False:
-                                continue
-
-                            if min_method == 1:
-                                min_power = numpy.min(binned_power[:,frequency_cut],axis=1)
-                            elif min_method == 2:
-                                #TRY GETTING MIN IN FREQ RANGE BEFORE BINNING IN TIME
-                                min_powers = numpy.min(powers[:,frequency_cut],axis=1)
-                                if sweeps_per_bin is not None:
-                                    min_power = numpy.zeros_like(binned_times)
-                                    for index in range((numpy.ceil(numpy.shape(powers)[0] / sweeps_per_bin).astype(int))):
-                                        min_power[index] = 10.0*numpy.log10(numpy.mean(10.0**(min_powers[index*sweeps_per_bin:min((index+1)*sweeps_per_bin,len(ts))]/10.0))) 
-                                else:
-                                    min_power = min_powers
-                            elif min_method == 3:
-                                #TRY GETTING MIN IN FREQ RANGE BEFORE BINNING IN TIME
-                                min_powers = numpy.min(powers[:,frequency_cut],axis=1)
-                                if sweeps_per_bin is not None:
-                                    min_power = numpy.zeros_like(binned_times)
-                                    for index in range((numpy.ceil(numpy.shape(powers)[0] / sweeps_per_bin).astype(int))):
-                                        min_power[index] = numpy.min(min_powers[index*sweeps_per_bin:min((index+1)*sweeps_per_bin,len(ts))]) 
-                                else:
-                                    min_power = min_powers
-
-                            
-                            x = binned_times
-
-                            plt.plot(x, min_power,label='Frequency ROI = %s'%str(ROI), alpha=0.8, color = ROI_cm(ROI_index/len(freq_ROI)),linewidth=lw) 
-                            plt.ylabel('Minimum Power in ROI (dBm)',fontsize=16)
-
-                        #Pretty up plot
-                        plt.grid(which='both', axis='both')
-                        ax = plt.gca()
-                        ax.minorticks_on()
-                        ax.grid(b=True, which='major', color='k', linestyle='-')
-                        ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                        plt.xlabel('Elapsed Time Since Beginning of Run (Hours)',fontsize=16)
-                        plt.legend(loc='upper right',fontsize=16)
-
-                        plt.subplot(2,1,2,sharex = ax)
-                        ax = plt.gca()
-                        
-                        #Make Landscape
-                        ax.axhspan(0, 90, alpha=0.2,label='Sky', color = 'blue')
-                        ax.axhspan(-90, 0, alpha=0.2,label='Ground', color = 'green')
-                        #ax.axvspan(0, 90, alpha=0.2,label='Sky', color = 'blue')
-
-
-                        plt.plot(utc_timestamps/3600.0, sagA_alt, c='r',label='Sgr A*',linewidth=lw)
-                        plt.plot(utc_timestamps/3600.0, sun_alt, c='k',label='Sun',linewidth=lw)
-
-                        plt.xlabel('Hours from Start of Run',fontsize=16)
-                        plt.ylabel('Altitutude (Degrees)',fontsize=16)
-                        plt.grid(which='both', axis='both')
-                        ax.minorticks_on()
-                        ax.grid(b=True, which='major', color='k', linestyle='-')
-                        ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                        plt.xlabel('Elapsed Time Since Beginning of Run (Hours)',fontsize=16)
-                        plt.legend(loc='upper right',fontsize=16)
-                        #plt.ylim((min(sagA_alt.degree)-5,max(sagA_alt.degree)+5))
-                        plt.ylim((-90,90))
-
-                    if plot_animated:
-                        #Plot All Spectra
-                        fig, ax = plt.subplots()
-                        fig.canvas.set_window_title('Animated')
-                        #Plot regions of interest
-                        ROI_cm = plt.get_cmap('gist_rainbow')
-
-                        for ROI_index, ROI in enumerate(freq_ROI):
-                            frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
-                            if numpy.all(frequency_cut):
-                                continue
-                            ax.axvspan(ROI[0], ROI[1], alpha=0.5,label='Frequency ROI = %s'%str(ROI), color = ROI_cm(ROI_index/len(freq_ROI)))
-
-                        for ROI_index, ROI in enumerate(ignore_range):
-                            frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
-                            #ax.axvspan(ROI[0], ROI[1], alpha=0.8,hatch = 'x',label='Frequency IGNORED = %s'%str(ROI), color = 'gray')
-                            ax.axvspan(ROI[0], ROI[1], alpha=0.8,hatch = 'x', color = 'gray')
-                        
-
-                        #Pretty up plot
-                        plt.grid(which='both', axis='both')
-                        ax = plt.gca()
-                        ax.minorticks_on()
-                        ax.grid(b=True, which='major', color='k', linestyle='-')
-                        ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
-                        plt.ylabel('dBm',fontsize=16)
-                        plt.xlabel('Frequency (MHz)',fontsize=16)
-                        cm = plt.get_cmap('gist_rainbow')
-                        line, = ax.plot(freq_Hz/1e6,binned_power[0],color='k',label='%.2f h Elapsed\n Sun Alt = %0.2f'%(binned_times[0],interpolated_sun_alt[0]))
-                        leg = plt.legend(loc='upper right',fontsize=16)
-                        def update(row):
-                            line.set_ydata(binned_power[row])
-                            leg.get_texts()[0].set_text('%.2f h Elapsed\n Sun Alt = %0.2f'%(binned_times[row],interpolated_sun_alt[row]))
-                            return line, ax
-
-                        anim = matplotlib.animation.FuncAnimation(fig, update, frames=numpy.arange(len(binned_times)), interval=10*1000 / len(binned_times))
-
             except Exception as e:
                 print('Error in main() while file is open.  Closing file.')
                 print(e)
@@ -433,3 +161,289 @@ if __name__ == '__main__':
                 fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
                 print(exc_type, fname, exc_tb.tb_lineno)
                 file.close()
+    
+
+    mask = numpy.isnan(powers)
+    powers = numpy.ma.masked_array(powers, mask=mask)
+    ts = numpy.array(ts)
+
+    run_start_time_utc_timestamp = min(ts)
+    run_stop_time_utc_timestamp = max(ts)
+    utc_timestamps, sagA_alt, sagA_az, sun_alt, sun_az = getSagCoords(run_start_time_utc_timestamp, run_stop_time_utc_timestamp,antenna_latlon, plot=sag_plot)
+    
+    average_power = 10*numpy.log10(numpy.mean(10**(powers/10),axis=0))
+    peaks, _ = scipy.signal.find_peaks(average_power,width = width,prominence=prominence)
+    if ignore_peaks == True:
+        for peak in peaks:
+            ignore_range.append([(freq_Hz[peak]-df_multiplier*df)/1e6,(freq_Hz[peak]+df_multiplier*df)/1e6])
+
+    ignore_cut = numpy.ones_like(freq_Hz,dtype=bool)
+    for i in ignore_range:
+        ignore_cut = numpy.multiply(~numpy.logical_and(freq_Hz/1e6 <= i[1],freq_Hz/1e6 >= i[0] ), ignore_cut) #Falses in this result in those freq_Hz not being considered in averages.
+
+    if plot_total_averaged:
+        #Plot Full Run Average Spectra
+        fig = plt.figure()
+        fig.canvas.set_window_title('Total Average Spectra')
+        ax = plt.gca()
+        
+        #Plot regions of interest
+        ROI_cm = plt.get_cmap('gist_rainbow')
+        for ROI_index, ROI in enumerate(freq_ROI):
+            frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
+            if numpy.all(frequency_cut):
+                continue
+            ax.axvspan(ROI[0], ROI[1], alpha=0.5,label='Frequency ROI = %s'%str(ROI), color = ROI_cm(ROI_index/len(freq_ROI)))
+
+        for ROI_index, ROI in enumerate(ignore_range):
+            frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
+            ax.axvspan(ROI[0], ROI[1], alpha=0.8,hatch = 'x', color = 'gray')
+
+        #Plot average spectra
+        plt.plot(freq_Hz/1e6,average_power,label='Averaged Spectrum')
+        
+        #Pretty up plot
+        plt.grid(which='both', axis='both')
+        ax = plt.gca()
+        ax.minorticks_on()
+        ax.grid(b=True, which='major', color='k', linestyle='-')
+        ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
+        plt.ylabel('dBm',fontsize=16)
+        plt.xlabel('Frequency (MHz)',fontsize=16)
+        plt.title('Average Spectum Over %0.2fh Run'%((utc_timestamps[-1]-utc_timestamps[0])/3600.0))
+        plt.scatter(freq_Hz[peaks]/1e6,average_power[peaks],c='r',s=20,label='Identified Peaks')
+        plt.legend(loc='upper right',fontsize=16)
+
+    start_tod = datetime.fromtimestamp(run_start_time_utc_timestamp).astimezone(timezone)
+    stop_tod = datetime.fromtimestamp(run_stop_time_utc_timestamp).astimezone(timezone)
+
+    print('Run Start:',start_tod)
+    print('Run Stop:',stop_tod)
+
+    for sweeps_per_bin in all_binnings:
+        if sweeps_per_bin is not None:
+
+            binned_power = numpy.zeros((numpy.ceil(numpy.shape(powers)[0] / sweeps_per_bin).astype(int),numpy.shape(powers)[1]))
+            binned_times = numpy.zeros((numpy.ceil(numpy.shape(powers)[0] / sweeps_per_bin).astype(int)))
+
+            for index in range((numpy.ceil(numpy.shape(powers)[0] / sweeps_per_bin).astype(int))):
+                binned_power[index] = 10*numpy.log10(numpy.mean(10**(powers[index*sweeps_per_bin:min((index+1)*sweeps_per_bin,len(ts))]/10),axis=0)) 
+                binned_times[index] = ((ts[min((index+1)*sweeps_per_bin - 1,len(ts)-1)] + ts[(index)*sweeps_per_bin])/2.0 - min(ts))/3600.
+            
+        else:
+            binned_power = powers
+            binned_times = (ts-min(ts))/3600.
+
+        interpolated_sun_alt = scipy.interpolate.interp1d(utc_timestamps.flatten()/3600,sun_alt.flatten())(binned_times)
+        
+        if plot_stacked_spectra:
+            #Plot All Spectra
+            fig = plt.figure()
+            fig.canvas.set_window_title('Stacked Spectra')
+            ax = plt.gca()
+            
+            #Plot regions of interest
+            ROI_cm = plt.get_cmap('gist_rainbow')
+            for ROI_index, ROI in enumerate(freq_ROI):
+                frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
+                if numpy.all(frequency_cut):
+                    continue
+                ax.axvspan(ROI[0], ROI[1], alpha=0.5,label='Frequency ROI = %s'%str(ROI), color = ROI_cm(ROI_index/len(freq_ROI)))
+
+            for ROI_index, ROI in enumerate(ignore_range):
+                frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
+                #ax.axvspan(ROI[0], ROI[1], alpha=0.8,hatch = 'x',label='Frequency IGNORED = %s'%str(ROI), color = 'gray')
+                ax.axvspan(ROI[0], ROI[1], alpha=0.8,hatch = 'x', color = 'gray')
+            
+
+
+            #Plot average sepectra
+            cm = plt.get_cmap('gist_rainbow')
+            for index, row in enumerate(binned_power):
+                plt.plot(freq_Hz/1e6,row,alpha=0.5,color=cm(index/len(binned_times)))
+            
+            #Pretty up plot
+            plt.grid(which='both', axis='both')
+            ax = plt.gca()
+            ax.minorticks_on()
+            ax.grid(b=True, which='major', color='k', linestyle='-')
+            ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
+            plt.ylabel('dBm',fontsize=16)
+            plt.xlabel('Frequency (MHz)',fontsize=16)
+
+
+
+        if plot_comparison:
+            #PLot the mean in ROI as a function of time. 
+            ROI_cm = plt.get_cmap('gist_rainbow')
+
+            fig = plt.figure()
+            fig.canvas.set_window_title('Mean Noise Alt Comparison')
+            plt.subplot(2,1,1)
+            ax = plt.gca()
+
+            #x = [datetime.datetime.strptime(datetime.fromtimestamp(d).replace(tzinfo=pytz.utc).astimezone(pytz.timezone('America/Chicago')),'%m/%d/%Y').date() for d in times]
+            for ROI_index, ROI in enumerate(freq_ROI):
+                frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
+                frequency_cut = numpy.logical_and(frequency_cut,ignore_cut)
+                if numpy.any(frequency_cut) == False:
+                    continue
+                average_power = 10*numpy.log10(numpy.mean(10**(binned_power[:,frequency_cut]/10),axis=1))
+                
+                if ignore_min_max == True:
+                    min_max_cut = ~numpy.isin(average_power, [min(average_power),max(average_power)])
+                    average_power = average_power[min_max_cut]
+                    x = binned_times[min_max_cut]
+                else:
+                    x = binned_times
+
+                plt.plot(x, average_power,label='Frequency ROI = %s'%str(ROI), alpha=0.8, color = ROI_cm(ROI_index/len(freq_ROI)),linewidth=lw) 
+                plt.ylabel('Average Power in ROI (dBm)',fontsize=16)
+
+            #Pretty up plot
+            plt.grid(which='both', axis='both')
+            ax = plt.gca()
+            ax.minorticks_on()
+            ax.grid(b=True, which='major', color='k', linestyle='-')
+            ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
+            plt.xlabel('Elapsed Time Since Beginning of Run (Hours)',fontsize=16)
+            plt.legend(loc='upper right',fontsize=16)
+
+            plt.subplot(2,1,2,sharex = ax)
+            ax = plt.gca()
+            
+            #Make Landscape
+            ax.axhspan(0, 90, alpha=0.2,label='Sky', color = 'blue')
+            ax.axhspan(-90, 0, alpha=0.2,label='Ground', color = 'green')
+            #ax.axvspan(0, 90, alpha=0.2,label='Sky', color = 'blue')
+
+
+            plt.plot(utc_timestamps/3600.0, sagA_alt, c='r',label='Sgr A*',linewidth=lw)
+            plt.plot(utc_timestamps/3600.0, sun_alt, c='k',label='Sun',linewidth=lw)
+
+            plt.xlabel('Hours from Start of Run',fontsize=16)
+            plt.ylabel('Altitutude (Degrees)',fontsize=16)
+            plt.grid(which='both', axis='both')
+            ax.minorticks_on()
+            ax.grid(b=True, which='major', color='k', linestyle='-')
+            ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
+            plt.xlabel('Elapsed Time Since Beginning of Run (Hours)',fontsize=16)
+            plt.legend(loc='upper right',fontsize=16)
+            #plt.ylim((min(sagA_alt.degree)-5,max(sagA_alt.degree)+5))
+            plt.ylim((-90,90))
+
+        if plot_comparison_mins:
+            #PLot the mean in ROI as a function of time. 
+            ROI_cm = plt.get_cmap('gist_rainbow')
+
+            fig = plt.figure()
+            fig.canvas.set_window_title('Min Noise Alt Comparison')
+            plt.subplot(2,1,1)
+            ax = plt.gca()
+
+            #x = [datetime.datetime.strptime(datetime.fromtimestamp(d).replace(tzinfo=pytz.utc).astimezone(pytz.timezone('America/Chicago')),'%m/%d/%Y').date() for d in times]
+            for ROI_index, ROI in enumerate(freq_ROI):
+                frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
+                frequency_cut = numpy.logical_and(frequency_cut,ignore_cut)
+                if numpy.any(frequency_cut) == False:
+                    continue
+
+                if min_method == 1:
+                    min_power = numpy.min(binned_power[:,frequency_cut],axis=1)
+                elif min_method == 2:
+                    #TRY GETTING MIN IN FREQ RANGE BEFORE BINNING IN TIME
+                    min_powers = numpy.min(powers[:,frequency_cut],axis=1)
+                    if sweeps_per_bin is not None:
+                        min_power = numpy.zeros_like(binned_times)
+                        for index in range((numpy.ceil(numpy.shape(powers)[0] / sweeps_per_bin).astype(int))):
+                            min_power[index] = 10.0*numpy.log10(numpy.mean(10.0**(min_powers[index*sweeps_per_bin:min((index+1)*sweeps_per_bin,len(ts))]/10.0))) 
+                    else:
+                        min_power = min_powers
+                elif min_method == 3:
+                    #TRY GETTING MIN IN FREQ RANGE BEFORE BINNING IN TIME
+                    min_powers = numpy.min(powers[:,frequency_cut],axis=1)
+                    if sweeps_per_bin is not None:
+                        min_power = numpy.zeros_like(binned_times)
+                        for index in range((numpy.ceil(numpy.shape(powers)[0] / sweeps_per_bin).astype(int))):
+                            min_power[index] = numpy.min(min_powers[index*sweeps_per_bin:min((index+1)*sweeps_per_bin,len(ts))]) 
+                    else:
+                        min_power = min_powers
+
+                
+                x = binned_times
+
+                plt.plot(x, min_power,label='Frequency ROI = %s'%str(ROI), alpha=0.8, color = ROI_cm(ROI_index/len(freq_ROI)),linewidth=lw) 
+                plt.ylabel('Minimum Power in ROI (dBm)',fontsize=16)
+
+            #Pretty up plot
+            plt.grid(which='both', axis='both')
+            ax = plt.gca()
+            ax.minorticks_on()
+            ax.grid(b=True, which='major', color='k', linestyle='-')
+            ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
+            plt.xlabel('Elapsed Time Since Beginning of Run (Hours)',fontsize=16)
+            plt.legend(loc='upper right',fontsize=16)
+
+            plt.subplot(2,1,2,sharex = ax)
+            ax = plt.gca()
+            
+            #Make Landscape
+            ax.axhspan(0, 90, alpha=0.2,label='Sky', color = 'blue')
+            ax.axhspan(-90, 0, alpha=0.2,label='Ground', color = 'green')
+            #ax.axvspan(0, 90, alpha=0.2,label='Sky', color = 'blue')
+
+
+            plt.plot(utc_timestamps/3600.0, sagA_alt, c='r',label='Sgr A*',linewidth=lw)
+            plt.plot(utc_timestamps/3600.0, sun_alt, c='k',label='Sun',linewidth=lw)
+
+            plt.xlabel('Hours from Start of Run',fontsize=16)
+            plt.ylabel('Altitutude (Degrees)',fontsize=16)
+            plt.grid(which='both', axis='both')
+            ax.minorticks_on()
+            ax.grid(b=True, which='major', color='k', linestyle='-')
+            ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
+            plt.xlabel('Elapsed Time Since Beginning of Run (Hours)',fontsize=16)
+            plt.legend(loc='upper right',fontsize=16)
+            #plt.ylim((min(sagA_alt.degree)-5,max(sagA_alt.degree)+5))
+            plt.ylim((-90,90))
+
+        if plot_animated:
+            #Plot All Spectra
+            fig, ax = plt.subplots()
+            fig.canvas.set_window_title('Animated')
+            #Plot regions of interest
+            ROI_cm = plt.get_cmap('gist_rainbow')
+
+            for ROI_index, ROI in enumerate(freq_ROI):
+                frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
+                if numpy.all(frequency_cut):
+                    continue
+                ax.axvspan(ROI[0], ROI[1], alpha=0.5,label='Frequency ROI = %s'%str(ROI), color = ROI_cm(ROI_index/len(freq_ROI)))
+
+            for ROI_index, ROI in enumerate(ignore_range):
+                frequency_cut = numpy.logical_and(freq_Hz/1e6 >= ROI[0], freq_Hz/1e6 <= ROI[1])
+                #ax.axvspan(ROI[0], ROI[1], alpha=0.8,hatch = 'x',label='Frequency IGNORED = %s'%str(ROI), color = 'gray')
+                ax.axvspan(ROI[0], ROI[1], alpha=0.8,hatch = 'x', color = 'gray')
+            
+
+            #Pretty up plot
+            plt.grid(which='both', axis='both')
+            ax = plt.gca()
+            ax.minorticks_on()
+            ax.grid(b=True, which='major', color='k', linestyle='-')
+            ax.grid(b=True, which='minor', color='tab:gray', linestyle='--',alpha=0.5)
+            plt.ylabel('dBm',fontsize=16)
+            plt.xlabel('Frequency (MHz)',fontsize=16)
+            cm = plt.get_cmap('gist_rainbow')
+            line, = ax.plot(freq_Hz/1e6,binned_power[0],color='k',label='%.2f h Elapsed\n Sun Alt = %0.2f'%(binned_times[0],interpolated_sun_alt[0]))
+            leg = plt.legend(loc='upper right',fontsize=16)
+            def update(row):
+                line.set_ydata(binned_power[row])
+                leg.get_texts()[0].set_text('%.2f h Elapsed\n Sun Alt = %0.2f'%(binned_times[row],interpolated_sun_alt[row]))
+                return line, ax
+
+            anim = matplotlib.animation.FuncAnimation(fig, update, frames=numpy.arange(len(binned_times)), interval=10*1000 / len(binned_times))
+            # Set up formatting for the movie files
+            #anim.save('animated_spectra.mp4', writer=None)
+            plt.figure()
+            plt.imshow(numpy.diff(powers,axis=0)==0,aspect='auto') #Checks if the spectra were properly updated between taking of data.  
